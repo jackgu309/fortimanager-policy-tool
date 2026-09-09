@@ -1,0 +1,12 @@
+﻿__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.cache/
+.venv/
+venv/
+env/
+.streamlit/secrets.toml
+.idea/
+.vscode/
+.DS_Store
