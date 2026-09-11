@@ -1,14 +1,15 @@
-"""FortiManager JSON-RPC client.
+﻿"""FortiManager JSON-RPC client.
 
-封装 FMG 的登录 / 列包 / 查 policy / 移动 / 安装 / 轮询任务等 API。
-请求体由纯函数构造，便于单元测试；FMGClient 负责 HTTP 与会话。
+Wraps FMG login / list-packages / list-policies / move / install / task-poll
+APIs. Request bodies are built by pure functions (easy to unit test); FMGClient
+handles HTTP and the session.
 """
 import requests
 import time
 
 
 class FMGError(Exception):
-    """FMG API 返回非 0 状态码时抛出。"""
+    """Raised when the FMG API returns a non-zero status code."""
 
     def __init__(self, code, message):
         self.code = code
@@ -61,6 +62,18 @@ def build_task_status(task_id, session):
     return _build("get", f"/task/task/{task_id}", session=session)
 
 
+def build_list_addrgrp(adom, session):
+    return _build("get", f"/pm/config/adom/{adom}/obj/firewall/addrgrp", session=session)
+
+
+def build_list_service_group(adom, session):
+    return _build("get", f"/pm/config/adom/{adom}/obj/firewall/service/group", session=session)
+
+
+def build_list_schedule_group(adom, session):
+    return _build("get", f"/pm/config/adom/{adom}/obj/firewall/schedule/group", session=session)
+
+
 def _status_of(response):
     return response["result"][0]["status"]
 
@@ -89,6 +102,36 @@ def extract_task_id(response):
 def extract_task(response):
     ensure_ok(response)
     return response["result"][0]["data"]
+
+
+def _member_names(member):
+    """addrgrp / service-group member may be a str or a {'name': ...} dict."""
+    names = []
+    for m in member or []:
+        if isinstance(m, dict):
+            n = m.get("name") or m.get("q_origin_key")
+            if n:
+                names.append(n)
+        elif isinstance(m, str):
+            names.append(m)
+    return names
+
+
+def build_group_map(groups):
+    return {g.get("name"): _member_names(g.get("member")) for g in groups or []}
+
+
+def resolve_names(names, group_map, _seen=None):
+    """Expand a group name into 'group member1 member2 ...'; recursive, cycle-safe."""
+    if _seen is None:
+        _seen = set()
+    out = []
+    for n in names or []:
+        out.append(n)
+        if n in group_map and n not in _seen:
+            _seen.add(n)
+            out.extend(resolve_names(group_map[n], group_map, _seen))
+    return out
 
 
 class FMGClient:
@@ -123,6 +166,15 @@ class FMGClient:
 
     def list_policies(self, adom, pkg):
         return extract_rows(self._post(build_list_policies(adom, pkg, self.session)))
+
+    def list_addrgrps(self, adom):
+        return extract_rows(self._post(build_list_addrgrp(adom, self.session)))
+
+    def list_service_groups(self, adom):
+        return extract_rows(self._post(build_list_service_group(adom, self.session)))
+
+    def list_schedule_groups(self, adom):
+        return extract_rows(self._post(build_list_schedule_group(adom, self.session)))
 
     def move_policy(self, adom, pkg, policyid, target, option):
         ensure_ok(self._post(

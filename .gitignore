@@ -10,3 +10,7 @@ env/
 .idea/
 .vscode/
 .DS_Store
+
+# Agent runtime data
+.superpowers/
+

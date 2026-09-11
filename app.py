@@ -1,4 +1,4 @@
-import time
+﻿import time
 import streamlit as st
 import fmg_client as c
 
@@ -9,23 +9,56 @@ def show_error(e):
     st.error(str(e))
 
 
+def _stringify(v):
+    if isinstance(v, list):
+        return " ".join(str(x) for x in v)
+    return v
+
+
+def expand_groups(policies, adom, client):
+    """Resolve address/service groups so source/destination match the FMG GUI.
+
+    FMG's JSON-RPC get returns only object/group *names* (e.g. an address-group
+    name), while the GUI expands groups into their members. Here we expand
+    srcaddr/dstaddr/service group names into 'group member1 member2 ...' and turn
+    every list column into a readable string.
+    """
+    try:
+        addr_map = c.build_group_map(client.list_addrgrps(adom))
+    except Exception:
+        addr_map = {}
+    try:
+        svc_map = c.build_group_map(client.list_service_groups(adom))
+    except Exception:
+        svc_map = {}
+    out = []
+    for p in policies or []:
+        p = dict(p)
+        for col in ("srcaddr", "dstaddr"):
+            p[col] = " ".join(c.resolve_names(p.get(col) or [], addr_map))
+        p["service"] = " ".join(c.resolve_names(p.get("service") or [], svc_map))
+        p = {k: _stringify(v) for k, v in p.items()}
+        out.append(p)
+    return out
+
+
 with st.sidebar:
-    st.title("FMG 连接")
-    host = st.text_input("FMG 地址", value="https://", key="host")
-    user = st.text_input("用户名", key="user")
-    passwd = st.text_input("密码", type="password", key="passwd")
-    verify_ssl = st.checkbox("校验 SSL 证书", value=False)
+    st.title("FMG Connection")
+    host = st.text_input("FMG address", value="https://", key="host")
+    user = st.text_input("Username", key="user")
+    passwd = st.text_input("Password", type="password", key="passwd")
+    verify_ssl = st.checkbox("Verify SSL certificate", value=False)
     if not verify_ssl:
-        st.warning("未校验 SSL：仅限可信内网使用。")
-    if st.button("登录"):
+        st.warning("SSL not verified: use only on trusted internal networks.")
+    if st.button("Login"):
         try:
             cl = c.FMGClient(host, verify_ssl=verify_ssl)
             cl.login(user, passwd)
             st.session_state.client = cl
-            st.success("登录成功")
+            st.success("Login successful")
         except Exception as e:
             show_error(e)
-    if st.button("登出"):
+    if st.button("Logout"):
         cl = st.session_state.get("client")
         if cl:
             try:
@@ -37,13 +70,13 @@ with st.sidebar:
 
 client = st.session_state.get("client")
 if not client:
-    st.info("请在左侧填写 FMG 地址、用户名、密码后点击「登录」。")
+    st.info("Fill in the FMG address, username and password on the left, then click Login.")
     st.stop()
 
-st.header("策略包与 Policy")
+st.header("Policy Packages & Policies")
 adom = st.text_input("ADOM", value="FortiProxy")
 
-if st.button("加载策略包"):
+if st.button("Load Policy Packages"):
     try:
         st.session_state.packages = [
             p.get("name") for p in client.list_packages(adom) if p.get("name")
@@ -51,48 +84,50 @@ if st.button("加载策略包"):
     except Exception as e:
         show_error(e)
 
-pkg = st.selectbox("选择 Policy Package", st.session_state.get("packages", []))
-if st.button("加载 Policy") and pkg:
+pkg = st.selectbox("Select Policy Package", st.session_state.get("packages", []))
+if st.button("Load Policies") and pkg:
     try:
         rows = client.list_policies(adom, pkg)
         if isinstance(rows, dict) and "results" in rows:
             rows = rows["results"]
+        rows = expand_groups(rows, adom, client)
         st.session_state.policies = rows
     except Exception as e:
         show_error(e)
 
 policies = st.session_state.get("policies", [])
 if policies:
-    st.subheader("Policy 列表")
+    st.subheader("Policy List")
     st.dataframe(policies)
 
-    st.subheader("移动 Policy")
+    st.subheader("Move Policy")
     ids = [str(p.get("policyid")) for p in policies]
-    src = st.selectbox("源 Policy", ids, key="src")
-    tgt = st.selectbox("目标 Policy", ids, key="tgt")
-    opt = st.radio("位置", ["after", "before"])
-    if st.button("移动"):
+    src = st.selectbox("Source Policy", ids, key="src")
+    tgt = st.selectbox("Target Policy", ids, key="tgt")
+    opt = st.radio("Position", ["after", "before"])
+    if st.button("Move"):
         try:
             client.move_policy(adom, pkg, int(src), int(tgt), opt)
-            st.success(f"已将 {src} 移动到 {tgt} 的 {opt} 位置")
+            st.success(f"Moved {src} to {opt} of {tgt}")
             rows = client.list_policies(adom, pkg)
             if isinstance(rows, dict) and "results" in rows:
                 rows = rows["results"]
+            rows = expand_groups(rows, adom, client)
             st.session_state.policies = rows
         except Exception as e:
             show_error(e)
 
-    st.subheader("安装到 FortiProxy")
-    dev = st.text_input("设备名（留空=全部绑定设备）", key="dev")
-    if st.button("安装到 FortiProxy"):
+    st.subheader("Install to FortiProxy")
+    dev = st.text_input("Device name (blank = all bound devices)", key="dev")
+    if st.button("Install to FortiProxy"):
         try:
             tid = client.install_package(adom, pkg, device=dev or None)
-            with st.spinner(f"安装任务 {tid} 进行中..."):
+            with st.spinner(f"Install task {tid} in progress..."):
                 task = client.wait_for_task(tid)
             if task.get("state") == "done":
-                st.success(f"安装完成（task {tid}）")
+                st.success(f"Install complete (task {tid})")
             else:
-                st.error(f"安装状态：{task.get('state')}")
+                st.error(f"Install state: {task.get('state')}")
             st.json(task)
         except Exception as e:
             show_error(e)
