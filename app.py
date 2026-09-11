@@ -9,19 +9,60 @@ def show_error(e):
     st.error(str(e))
 
 
-def _stringify(v):
-    if isinstance(v, list):
-        return " ".join(str(x) for x in v)
-    return v
+# Raw FMG policy field name -> FortiManager GUI column label.
+COLUMN_LABELS = {
+    "policyid": "ID",
+    "name": "Name",
+    "srcintf": "Source Interface",
+    "dstintf": "Destination Interface",
+    "srcaddr": "Source",
+    "dstaddr": "Destination",
+    "service": "Service",
+    "schedule": "Schedule",
+    "action": "Action",
+    "status": "Status",
+    "nat": "NAT",
+    "logtraffic": "Log",
+    "comments": "Comments",
+    "users": "Users",
+    "groups": "Groups",
+    "application": "Application",
+    "url-category": "URL Category",
+    "fsso": "FSSO",
+    "internet-service-id": "Internet Service",
+    "ippool": "IP Pool",
+    "poolname": "IP Pool Name",
+    "profile-group": "Profile Group",
+    "av-profile": "AntiVirus",
+    "ips-sensor": "IPS",
+    "webfilter-profile": "Web Filter",
+    "application-list": "Application List",
+}
+
+# Preferred column order, matching the FMG GUI layout (extra columns appended after).
+COLUMN_ORDER = [
+    "ID", "Name", "Source Interface", "Destination Interface",
+    "Source", "Destination", "Service", "Schedule", "Action",
+    "Status", "NAT", "Log", "Comments",
+]
+
+# Raw enum value -> FMG GUI display label.
+VALUE_LABELS = {
+    "action": {"accept": "Accept", "deny": "Deny", "ipsec": "IPsec"},
+    "status": {"enable": "Enabled", "disable": "Disabled"},
+    "nat": {"enable": "Enabled", "disable": "Disabled"},
+    "logtraffic": {"enable": "Enabled", "disable": "Disabled", "utm": "UTM", "all": "All"},
+}
 
 
 def expand_groups(policies, adom, client):
-    """Resolve address/service groups so source/destination match the FMG GUI.
+    """Make the policy table match the FortiManager GUI.
 
-    FMG's JSON-RPC get returns only object/group *names* (e.g. an address-group
-    name), while the GUI expands groups into their members. Here we expand
-    srcaddr/dstaddr/service group names into 'group member1 member2 ...' and turn
-    every list column into a readable string.
+    - Expand address/service groups into 'group member1 member2 ...'
+      (FMG's JSON-RPC get returns only the group name, the GUI expands members).
+    - Translate enum values (action/status/nat/logtraffic) to GUI labels.
+    - Rename raw field names to GUI column labels (srcaddr -> Source, etc.).
+    - Stringify list cells and order columns like the GUI.
     """
     try:
         addr_map = c.build_group_map(client.list_addrgrps(adom))
@@ -33,12 +74,25 @@ def expand_groups(policies, adom, client):
         svc_map = {}
     out = []
     for p in policies or []:
-        p = dict(p)
-        for col in ("srcaddr", "dstaddr"):
-            p[col] = " ".join(c.resolve_names(p.get(col) or [], addr_map))
-        p["service"] = " ".join(c.resolve_names(p.get("service") or [], svc_map))
-        p = {k: _stringify(v) for k, v in p.items()}
-        out.append(p)
+        row = {}
+        for k, v in p.items():
+            if k in ("srcaddr", "dstaddr"):
+                v = " ".join(c.resolve_names(v or [], addr_map))
+            elif k == "service":
+                v = " ".join(c.resolve_names(v or [], svc_map))
+            if isinstance(v, list):
+                v = " ".join(str(x) for x in v)
+            if k in VALUE_LABELS and isinstance(v, str):
+                v = VALUE_LABELS[k].get(v, v)
+            row[COLUMN_LABELS.get(k, k)] = v
+        ordered = {}
+        for label in COLUMN_ORDER:
+            if label in row:
+                ordered[label] = row[label]
+        for label, val in row.items():
+            if label not in ordered:
+                ordered[label] = val
+        out.append(ordered)
     return out
 
 
@@ -101,7 +155,7 @@ if policies:
     st.dataframe(policies)
 
     st.subheader("Move Policy")
-    ids = [str(p.get("policyid")) for p in policies]
+    ids = [str(p.get("ID")) for p in policies]
     src = st.selectbox("Source Policy", ids, key="src")
     tgt = st.selectbox("Target Policy", ids, key="tgt")
     opt = st.radio("Position", ["after", "before"])

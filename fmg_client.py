@@ -104,6 +104,15 @@ def extract_task(response):
     return response["result"][0]["data"]
 
 
+def _normalize_table(data):
+    """FMG 'get' returns either a list, or a paged dict with a 'results' key."""
+    if isinstance(data, dict):
+        if "results" in data:
+            return data["results"]
+        return []
+    return data or []
+
+
 def _member_names(member):
     """addrgrp / service-group member may be a str or a {'name': ...} dict."""
     names = []
@@ -118,6 +127,7 @@ def _member_names(member):
 
 
 def build_group_map(groups):
+    groups = _normalize_table(groups)
     return {g.get("name"): _member_names(g.get("member")) for g in groups or []}
 
 
@@ -167,14 +177,51 @@ class FMGClient:
     def list_policies(self, adom, pkg):
         return extract_rows(self._post(build_list_policies(adom, pkg, self.session)))
 
+    def _list_paged(self, build_fn, adom):
+        """Page through an object-table 'get' endpoint and return a flat list.
+
+        FMG may return a paged dict ({"results": [...], "total": N}); we loop with
+        the 'paging' option and de-duplicate by name so we never loop forever or
+        emit duplicate rows if the server ignores paging.
+        """
+        out = []
+        seen = set()
+        page = 500
+        start = 0
+        while True:
+            req = build_fn(adom, self.session)
+            req["params"][0]["option"] = {"paging": {"start": start, "count": page}}
+            data = extract_rows(self._post(req))
+            rows = _normalize_table(data)
+            if not rows:
+                break
+            added = 0
+            for r in rows:
+                name = r.get("name") if isinstance(r, dict) else None
+                if name is not None:
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                out.append(r)
+                added += 1
+            if added == 0:
+                break
+            if isinstance(data, dict) and data.get("total") is not None:
+                if start + len(rows) >= data["total"]:
+                    break
+            if len(rows) < page:
+                break
+            start += page
+        return out
+
     def list_addrgrps(self, adom):
-        return extract_rows(self._post(build_list_addrgrp(adom, self.session)))
+        return self._list_paged(build_list_addrgrp, adom)
 
     def list_service_groups(self, adom):
-        return extract_rows(self._post(build_list_service_group(adom, self.session)))
+        return self._list_paged(build_list_service_group, adom)
 
     def list_schedule_groups(self, adom):
-        return extract_rows(self._post(build_list_schedule_group(adom, self.session)))
+        return self._list_paged(build_list_schedule_group, adom)
 
     def move_policy(self, adom, pkg, policyid, target, option):
         ensure_ok(self._post(
