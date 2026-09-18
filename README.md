@@ -57,5 +57,11 @@ streamlit run app.py
 ## Notes
 - Tested against FortiManager VM64 v7.6.4 (Feature). The JSON-RPC behavior
   described above is consistent across FMG versions.
+- **Workspace Mode**: if the target ADOM has Workspace Mode enabled, write
+  operations (creating the allow policy, moving a policy) require the ADOM
+  workspace lock. The tool auto-acquires the lock, commits, and unlocks around
+  each write. When Workspace Mode is disabled it falls back to normal-mode
+  writes transparently — `FMG API error -10147: no write permission` means the
+  ADOM is locked by another session or global Read-Only Mode is on.
 - FQDN-based allow lists the whole domain, not a specific URL path. For
   path-level control a web-filter profile would be required (not implemented).

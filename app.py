@@ -171,13 +171,25 @@ with tab1:
         opt = st.radio("Position", ["after", "before"])
         if st.button("Move", key="move"):
             try:
-                client.move_policy(adom, pkg, int(src), int(tgt), opt)
-                st.success(f"Moved {src} to {opt} of {tgt}")
-                rows = client.list_policies(adom, pkg)
-                if isinstance(rows, dict) and "results" in rows:
-                    rows = rows["results"]
-                rows = expand_groups(rows, adom, client)
-                st.session_state.policies = rows
+                locked = client.lock_workspace(adom)
+                try:
+                    client.move_policy(adom, pkg, int(src), int(tgt), opt)
+                    st.success(f"Moved {src} to {opt} of {tgt}")
+                    rows = client.list_policies(adom, pkg)
+                    if isinstance(rows, dict) and "results" in rows:
+                        rows = rows["results"]
+                    rows = expand_groups(rows, adom, client)
+                    st.session_state.policies = rows
+                finally:
+                    if locked:
+                        try:
+                            client.commit_workspace(adom)
+                        except Exception:
+                            pass
+                        try:
+                            client.unlock_workspace(adom)
+                        except Exception:
+                            pass
             except Exception as e:
                 show_error(e)
 
@@ -232,48 +244,65 @@ with tab2:
                 if not host:
                     st.error("Could not parse a hostname from the URL.")
                 else:
-                    dst_name = "fqdn-" + host.replace(".", "-")
-                    if not client.get_address(adom2, dst_name):
-                        client.create_address(
-                            adom2,
-                            {"name": dst_name, "type": "fqdn", "fqdn": host,
-                             "comment": "auto-created by Policy Manager"},
+                    locked = False
+                    created = False
+                    try:
+                        locked = client.lock_workspace(adom2)
+                        dst_name = "fqdn-" + host.replace(".", "-")
+                        if not client.get_address(adom2, dst_name):
+                            client.create_address(
+                                adom2,
+                                {"name": dst_name, "type": "fqdn", "fqdn": host,
+                                 "comment": "auto-created by Policy Manager"},
+                            )
+                        src_name = "host-" + src_ip.replace(".", "-")
+                        if not client.get_address(adom2, src_name):
+                            client.create_address(
+                                adom2,
+                                {"name": src_name, "type": "ipmask",
+                                 "subnet": f"{src_ip}/32",
+                                 "comment": "auto-created by Policy Manager"},
+                            )
+                        svc = []
+                        if http:
+                            svc.append("HTTP")
+                        if https:
+                            svc.append("HTTPS")
+                        if not svc:
+                            svc = ["HTTP", "HTTPS"]
+                        pid = client.next_policy_id(adom2, pkg2)
+                        policy = {
+                            "policyid": pid,
+                            "name": f"allow {src_ip} -> {host}",
+                            "srcintf": ["any"],
+                            "dstintf": ["any"],
+                            "srcaddr": [src_name],
+                            "dstaddr": [dst_name],
+                            "service": svc,
+                            "action": "accept",
+                            "status": "enable",
+                            "schedule": "always",
+                            "nat": "disable",
+                            "logtraffic": "utm",
+                        }
+                        client.create_policy(adom2, pkg2, policy)
+                        created = True
+                        st.success(
+                            f"Created policy #{pid}: {src_ip} -> {host} in package '{pkg2}'"
                         )
-                    src_name = "host-" + src_ip.replace(".", "-")
-                    if not client.get_address(adom2, src_name):
-                        client.create_address(
-                            adom2,
-                            {"name": src_name, "type": "ipmask",
-                             "subnet": f"{src_ip}/32",
-                             "comment": "auto-created by Policy Manager"},
-                        )
-                    svc = []
-                    if http:
-                        svc.append("HTTP")
-                    if https:
-                        svc.append("HTTPS")
-                    if not svc:
-                        svc = ["HTTP", "HTTPS"]
-                    pid = client.next_policy_id(adom2, pkg2)
-                    policy = {
-                        "policyid": pid,
-                        "name": f"allow {src_ip} -> {host}",
-                        "srcintf": ["any"],
-                        "dstintf": ["any"],
-                        "srcaddr": [src_name],
-                        "dstaddr": [dst_name],
-                        "service": svc,
-                        "action": "accept",
-                        "status": "enable",
-                        "schedule": "always",
-                        "nat": "disable",
-                        "logtraffic": "utm",
-                    }
-                    client.create_policy(adom2, pkg2, policy)
-                    st.success(
-                        f"Created policy #{pid}: {src_ip} -> {host} in package '{pkg2}'"
-                    )
-                    if auto_install:
+                    finally:
+                        # Commit + unlock the ADOM workspace when Workspace Mode is on.
+                        # Skipped when lock_workspace returned False (normal mode).
+                        if locked:
+                            try:
+                                client.commit_workspace(adom2)
+                            except Exception:
+                                pass
+                            try:
+                                client.unlock_workspace(adom2)
+                            except Exception:
+                                pass
+                    if created and auto_install:
                         tid = client.install_package(adom2, pkg2, device=dev2 or None)
                         with st.spinner(f"Install task {tid} in progress..."):
                             task = client.wait_for_task(tid)

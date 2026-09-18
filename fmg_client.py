@@ -86,6 +86,18 @@ def build_create_policy(adom, pkg, policy, session):
     return _build("add", f"/pm/config/adom/{adom}/pkg/{pkg}/firewall/policy", data=policy, session=session)
 
 
+def build_workspace_lock(adom, session):
+    return _build("exec", f"/dvmdb/adom/{adom}/workspace/lock", session=session)
+
+
+def build_workspace_commit(adom, session):
+    return _build("exec", f"/dvmdb/adom/{adom}/workspace/commit", session=session)
+
+
+def build_workspace_unlock(adom, session):
+    return _build("exec", f"/dvmdb/adom/{adom}/workspace/unlock", session=session)
+
+
 def _status_of(response):
     return response["result"][0]["status"]
 
@@ -247,6 +259,28 @@ class FMGClient:
 
     def create_policy(self, adom, pkg, policy):
         ensure_ok(self._post(build_create_policy(adom, pkg, policy, self.session)))
+
+    def lock_workspace(self, adom):
+        """Acquire the ADOM workspace lock so write operations are permitted.
+
+        Returns True if this call acquired the lock. Returns False when the ADOM
+        is not in Workspace Mode (FMG rejects the lock request), so callers can
+        fall back to normal-mode writes. Any other error is re-raised.
+        """
+        try:
+            ensure_ok(self._post(build_workspace_lock(adom, self.session)))
+            return True
+        except FMGError as e:
+            msg = (e.message or "").lower()
+            if e.code in (-10148, -10149) or "workspace mode" in msg or "disabled" in msg:
+                return False
+            raise
+
+    def commit_workspace(self, adom):
+        ensure_ok(self._post(build_workspace_commit(adom, self.session)))
+
+    def unlock_workspace(self, adom):
+        ensure_ok(self._post(build_workspace_unlock(adom, self.session)))
 
     def next_policy_id(self, adom, pkg):
         rows = self.list_policies(adom, pkg)
