@@ -74,6 +74,18 @@ def build_list_schedule_group(adom, session):
     return _build("get", f"/pm/config/adom/{adom}/obj/firewall/schedule/group", session=session)
 
 
+def build_get_address(adom, name, session):
+    return _build("get", f"/pm/config/adom/{adom}/obj/firewall/address/{name}", session=session)
+
+
+def build_create_address(adom, obj, session):
+    return _build("add", f"/pm/config/adom/{adom}/obj/firewall/address", data=obj, session=session)
+
+
+def build_create_policy(adom, pkg, policy, session):
+    return _build("add", f"/pm/config/adom/{adom}/pkg/{pkg}/firewall/policy", data=policy, session=session)
+
+
 def _status_of(response):
     return response["result"][0]["status"]
 
@@ -222,6 +234,26 @@ class FMGClient:
 
     def list_schedule_groups(self, adom):
         return self._list_paged(build_list_schedule_group, adom)
+
+    def get_address(self, adom, name):
+        """Return the named address object, or None if it does not exist."""
+        try:
+            return extract_rows(self._post(build_get_address(adom, name, self.session)))
+        except FMGError:
+            return None
+
+    def create_address(self, adom, obj):
+        ensure_ok(self._post(build_create_address(adom, obj, self.session)))
+
+    def create_policy(self, adom, pkg, policy):
+        ensure_ok(self._post(build_create_policy(adom, pkg, policy, self.session)))
+
+    def next_policy_id(self, adom, pkg):
+        rows = self.list_policies(adom, pkg)
+        if isinstance(rows, dict) and "results" in rows:
+            rows = rows["results"]
+        ids = [p.get("policyid") for p in rows or [] if isinstance(p.get("policyid"), int)]
+        return (max(ids) + 1) if ids else 1
 
     def move_policy(self, adom, pkg, policyid, target, option):
         ensure_ok(self._post(
