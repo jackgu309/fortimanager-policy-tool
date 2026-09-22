@@ -260,7 +260,7 @@ with tab2:
                             client.create_address(
                                 adom2,
                                 {"name": src_name, "type": "ipmask",
-                                 "subnet": f"{src_ip}/32",
+                                 "subnet": [src_ip, "255.255.255.255"],
                                  "comment": "auto-created by Policy Manager"},
                             )
                         svc = []
