@@ -250,19 +250,25 @@ with tab2:
                         locked = client.lock_workspace(adom2)
                         dst_name = "fqdn-" + host.replace(".", "-")
                         if not client.get_address(adom2, dst_name):
-                            client.create_address(
-                                adom2,
-                                {"name": dst_name, "type": "fqdn", "fqdn": host,
-                                 "comment": "auto-created by Policy Manager"},
-                            )
+                            try:
+                                client.create_address(
+                                    adom2,
+                                    {"name": dst_name, "type": 2, "fqdn": host,
+                                     "comment": "auto-created by Policy Manager"},
+                                )
+                            except c.FMGError as e:
+                                raise c.FMGError(e.code, f"create FQDN address '{dst_name}': {e.message}") from e
                         src_name = "host-" + src_ip.replace(".", "-")
                         if not client.get_address(adom2, src_name):
-                            client.create_address(
-                                adom2,
-                                {"name": src_name, "type": "ipmask",
-                                 "subnet": [src_ip, "255.255.255.255"],
-                                 "comment": "auto-created by Policy Manager"},
-                            )
+                            try:
+                                client.create_address(
+                                    adom2,
+                                    {"name": src_name, "type": 0,
+                                     "subnet": [src_ip, "255.255.255.255"],
+                                     "comment": "auto-created by Policy Manager"},
+                                )
+                            except c.FMGError as e:
+                                raise c.FMGError(e.code, f"create source address '{src_name}': {e.message}") from e
                         svc = []
                         if http:
                             svc.append("HTTP")
@@ -285,7 +291,10 @@ with tab2:
                             "nat": "disable",
                             "logtraffic": "utm",
                         }
-                        client.create_policy(adom2, pkg2, policy)
+                        try:
+                            client.create_policy(adom2, pkg2, policy)
+                        except c.FMGError as e:
+                            raise c.FMGError(e.code, f"create policy #{pid}: {e.message}") from e
                         created = True
                         st.success(
                             f"Created policy #{pid}: {src_ip} -> {host} in package '{pkg2}'"
