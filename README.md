@@ -27,7 +27,7 @@ Quickly create an "allow this source IP to reach this URL" policy:
   - creates a destination **FQDN** address object (`type=fqdn`)
   - creates a source **/32 host** address object (`type=ipmask`)
   - adds an `accept` policy (`service` = HTTP/HTTPS, `srcintf`/`dstintf` = `any`,
-    `schedule` = `always`, `nat` = `disable`, `logtraffic` = `utm`)
+    `schedule` = `always`, `nat` = `disable`; logging follows the package default)
 - Address objects are created idempotently (an existing object with the same
   derived name is reused, not duplicated)
 - Optional auto-install after creating (off by default — install manually from

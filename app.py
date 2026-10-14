@@ -276,29 +276,47 @@ with tab2:
                             svc.append("HTTPS")
                         if not svc:
                             svc = ["HTTP", "HTTPS"]
-                        pid = client.next_policy_id(adom2, pkg2)
+                        # FMG pm/config encodes enums as integers (action=1 accept,
+                        # nat=0 disable) and assigns policyid server-side on add;
+                        # name references (interfaces/addresses/services/schedule)
+                        # stay strings. status/logtraffic omitted -> package defaults.
                         policy = {
-                            "policyid": pid,
                             "name": f"allow {src_ip} -> {host}",
                             "srcintf": ["any"],
                             "dstintf": ["any"],
                             "srcaddr": [src_name],
                             "dstaddr": [dst_name],
                             "service": svc,
-                            "action": "accept",
-                            "status": "enable",
+                            "action": 1,
                             "schedule": "always",
-                            "nat": "disable",
-                            "logtraffic": "utm",
+                            "nat": 0,
                         }
                         try:
                             client.create_policy(adom2, pkg2, policy)
                         except c.FMGError as e:
-                            raise c.FMGError(e.code, f"create policy #{pid}: {e.message}") from e
+                            raise c.FMGError(e.code, f"create policy '{policy['name']}': {e.message}") from e
                         created = True
-                        st.success(
-                            f"Created policy #{pid}: {src_ip} -> {host} in package '{pkg2}'"
-                        )
+                        # policyid is server-assigned on add; look it up for the message.
+                        pid = None
+                        try:
+                            prows = client.list_policies(adom2, pkg2)
+                            if isinstance(prows, dict) and "results" in prows:
+                                prows = prows["results"]
+                            pid = next(
+                                (p.get("policyid") for p in prows or []
+                                 if isinstance(p, dict) and p.get("name") == policy["name"]),
+                                None,
+                            )
+                        except Exception:
+                            pid = None
+                        if pid is not None:
+                            st.success(
+                                f"Created policy #{pid}: {src_ip} -> {host} in package '{pkg2}'"
+                            )
+                        else:
+                            st.success(
+                                f"Created policy: {src_ip} -> {host} in package '{pkg2}'"
+                            )
                     finally:
                         # Commit + unlock the ADOM workspace when Workspace Mode is on.
                         # Skipped when lock_workspace returned False (normal mode).
