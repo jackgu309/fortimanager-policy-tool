@@ -4,8 +4,24 @@ Wraps FMG login / list-packages / list-policies / move / install / task-poll
 APIs. Request bodies are built by pure functions (easy to unit test); FMGClient
 handles HTTP and the session.
 """
+import json
+import logging
 import requests
 import time
+
+log = logging.getLogger("fmg_client")
+
+_SENSITIVE_KEYS = ("session", "passwd", "password")
+
+
+def _redact(obj):
+    """Return a copy of `obj` with sensitive field values masked for logging."""
+    if isinstance(obj, dict):
+        return {k: ("***" if str(k).lower() in _SENSITIVE_KEYS else _redact(v))
+                for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact(v) for v in obj]
+    return obj
 
 
 class FMGError(Exception):
@@ -179,12 +195,19 @@ class FMGClient:
     def _post(self, body):
         self._rid += 1
         body = {**body, "id": self._rid}
-        resp = requests.post(
-            f"{self.host}/jsonrpc", json=body,
-            verify=self.verify_ssl, timeout=self.timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        log.debug("FMG request -> %s", json.dumps(_redact(body), ensure_ascii=False))
+        try:
+            resp = requests.post(
+                f"{self.host}/jsonrpc", json=body,
+                verify=self.verify_ssl, timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            log.error("FMG request failed: %s", e)
+            raise
+        log.debug("FMG response <- %s", json.dumps(data, ensure_ascii=False)[:4000])
+        return data
 
     def login(self, user, passwd):
         self.session = parse_session(self._post(build_login(user, passwd)))

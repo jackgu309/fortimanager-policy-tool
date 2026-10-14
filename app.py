@@ -1,12 +1,38 @@
-﻿import time
+﻿import logging
+import os
+import time
 import streamlit as st
 import fmg_client as c
+
+
+def _setup_logging():
+    """Configure the policy_manager / fmg_client loggers to print to the terminal.
+
+    Level is controlled by the LOG_LEVEL env var (DEBUG/INFO/WARNING/...),
+    defaulting to INFO. This does not affect Streamlit's own server logs.
+    """
+    level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    for name in ("policy_manager", "fmg_client"):
+        lg = logging.getLogger(name)
+        lg.setLevel(level)
+        lg.propagate = False
+        if not lg.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            )
+            lg.addHandler(handler)
+
+
+_setup_logging()
+log = logging.getLogger("policy_manager")
 
 st.set_page_config(page_title="FortiManager Policy Manager", layout="wide")
 
 
 def show_error(e):
     st.error(str(e))
+    log.exception("operation failed")
 
 
 # Raw FMG policy field name -> FortiManager GUI column label.
@@ -248,6 +274,7 @@ with tab2:
                     created = False
                     try:
                         locked = client.lock_workspace(adom2)
+                        log.info("allow_ip_url: lock_workspace(%s) -> %s", adom2, locked)
                         dst_name = "fqdn-" + host.replace(".", "-")
                         if not client.get_address(adom2, dst_name):
                             try:
@@ -256,6 +283,7 @@ with tab2:
                                     {"name": dst_name, "type": 2, "fqdn": host,
                                      "comment": "auto-created by Policy Manager"},
                                 )
+                                log.info("allow_ip_url: created FQDN address %s", dst_name)
                             except c.FMGError as e:
                                 raise c.FMGError(e.code, f"create FQDN address '{dst_name}': {e.message}") from e
                         src_name = "host-" + src_ip.replace(".", "-")
@@ -267,6 +295,7 @@ with tab2:
                                      "subnet": [src_ip, "255.255.255.255"],
                                      "comment": "auto-created by Policy Manager"},
                                 )
+                                log.info("allow_ip_url: created source address %s", src_name)
                             except c.FMGError as e:
                                 raise c.FMGError(e.code, f"create source address '{src_name}': {e.message}") from e
                         svc = []
@@ -293,6 +322,7 @@ with tab2:
                         }
                         try:
                             client.create_policy(adom2, pkg2, policy)
+                            log.info("allow_ip_url: created policy '%s'", policy["name"])
                         except c.FMGError as e:
                             raise c.FMGError(e.code, f"create policy '{policy['name']}': {e.message}") from e
                         created = True
