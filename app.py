@@ -1,4 +1,5 @@
-﻿import logging
+﻿import json
+import logging
 import os
 import time
 import streamlit as st
@@ -234,6 +235,35 @@ with tab1:
             except Exception as e:
                 show_error(e)
 
+        with st.expander("Debug: export raw FMG policy objects (troubleshooting / payload reference)"):
+            st.caption(
+                "Policy objects exactly as FortiManager returns them from its JSON-RPC `get` "
+                "(no group expansion, no enum translation). Use this to verify the exact shape "
+                "a `create policy` payload must use."
+            )
+            if pkg and st.button("Fetch raw policies", key="rawdump"):
+                try:
+                    raw = client.list_policies(adom, pkg)
+                    rows_raw = raw["results"] if isinstance(raw, dict) and "results" in raw else raw
+                    st.session_state.raw_policies = rows_raw or []
+                except Exception as e:
+                    show_error(e)
+            raw_rows = st.session_state.get("raw_policies") or []
+            if raw_rows:
+                st.caption(f"{len(raw_rows)} raw object(s) returned by FMG.")
+                idx = st.number_input(
+                    "Object index to display", min_value=0,
+                    max_value=max(len(raw_rows) - 1, 0), value=0, step=1, key="rawidx",
+                )
+                st.json(raw_rows[int(idx)])
+                st.download_button(
+                    "Download all raw policies (JSON)",
+                    data=json.dumps(raw_rows, indent=2, ensure_ascii=False),
+                    file_name="fmg_raw_policies.json",
+                    mime="application/json",
+                    key="rawdl",
+                )
+
 with tab2:
     st.header("Allow Source IP → Destination URL")
     st.caption(
@@ -306,10 +336,13 @@ with tab2:
                         if not svc:
                             svc = ["HTTP", "HTTPS"]
                         # FMG pm/config encodes enums as integers (action=1 accept,
-                        # nat=0 disable) and assigns policyid server-side on add;
-                        # name references (interfaces/addresses/services/schedule)
-                        # stay strings. status/logtraffic omitted -> package defaults.
+                        # nat=0 disable). policyid is REQUIRED on add (FMG does not
+                        # auto-assign it), so compute the next free id. Name
+                        # references (interfaces/addresses/services/schedule) stay
+                        # strings. status/logtraffic omitted -> package defaults.
+                        pid = client.next_policy_id(adom2, pkg2)
                         policy = {
+                            "policyid": pid,
                             "name": f"allow {src_ip} -> {host}",
                             "srcintf": ["any"],
                             "dstintf": ["any"],
